@@ -1,0 +1,19 @@
+{
+  "name": "Barcode Inventory",
+  "short_name": "Inventory",
+  "description": "Scan barcodes, record quantities and best-before dates, and export inventory as CSV.",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "background_color": "#f5f3ec",
+  "theme_color": "#194b5f",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
