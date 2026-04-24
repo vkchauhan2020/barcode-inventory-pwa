@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { BrowserMultiFormatReader, type IScannerControls } from '@zxing/browser';
+import { BarcodeFormat, DecodeHintType } from '@zxing/library';
 import {
   CalendarDays,
   Camera,
@@ -17,6 +18,61 @@ import { createCsv, createCsvFilename } from './csv';
 import type { InventoryRecord } from './types';
 
 type ScannerState = 'idle' | 'starting' | 'scanning' | 'paused' | 'error';
+
+type NativeBarcodeDetectorResult = {
+  rawValue?: string;
+};
+
+type NativeBarcodeDetector = {
+  detect: (source: HTMLVideoElement) => Promise<NativeBarcodeDetectorResult[]>;
+};
+
+type NativeBarcodeDetectorConstructor = new (options?: { formats?: string[] }) => NativeBarcodeDetector;
+
+declare global {
+  interface Window {
+    BarcodeDetector?: NativeBarcodeDetectorConstructor;
+  }
+}
+
+const BARCODE_FORMATS = [
+  BarcodeFormat.EAN_13,
+  BarcodeFormat.EAN_8,
+  BarcodeFormat.UPC_A,
+  BarcodeFormat.UPC_E,
+  BarcodeFormat.CODE_128,
+  BarcodeFormat.CODE_39,
+  BarcodeFormat.CODE_93,
+  BarcodeFormat.CODABAR,
+  BarcodeFormat.ITF,
+  BarcodeFormat.QR_CODE,
+  BarcodeFormat.DATA_MATRIX,
+  BarcodeFormat.PDF_417,
+];
+
+const NATIVE_BARCODE_FORMATS = [
+  'ean_13',
+  'ean_8',
+  'upc_a',
+  'upc_e',
+  'code_128',
+  'code_39',
+  'code_93',
+  'codabar',
+  'itf',
+  'qr_code',
+  'data_matrix',
+  'pdf417',
+];
+
+const REAR_CAMERA_CONSTRAINTS: MediaStreamConstraints = {
+  audio: false,
+  video: {
+    facingMode: { ideal: 'environment' },
+    width: { ideal: 1280 },
+    height: { ideal: 720 },
+  },
+};
 
 function createRecord(barcode: string, quantity: number, bestBeforeDate: string): InventoryRecord {
   return {
@@ -47,6 +103,29 @@ function formatDisplayDateTime(value: string): string {
   }).format(new Date(value));
 }
 
+function createScannerHints(): Map<DecodeHintType, unknown> {
+  const hints = new Map<DecodeHintType, unknown>();
+  hints.set(DecodeHintType.POSSIBLE_FORMATS, BARCODE_FORMATS);
+  hints.set(DecodeHintType.TRY_HARDER, true);
+  return hints;
+}
+
+function getScannerErrorMessage(error: unknown): string {
+  if (error instanceof DOMException) {
+    if (error.name === 'NotAllowedError') {
+      return 'Camera permission was blocked. Allow camera access in Chrome settings, then tap Scan.';
+    }
+    if (error.name === 'NotFoundError') {
+      return 'No camera was found on this device.';
+    }
+    if (error.name === 'NotReadableError') {
+      return 'The camera is busy in another app. Close it there, then tap Scan again.';
+    }
+  }
+
+  return 'Camera scanning is unavailable. You can enter the barcode manually.';
+}
+
 export default function App() {
   const [records, setRecords] = useState<InventoryRecord[]>([]);
   const [scannerState, setScannerState] = useState<ScannerState>('idle');
@@ -60,6 +139,7 @@ export default function App() {
   const controlsRef = useRef<IScannerControls | null>(null);
   const scannerRef = useRef<BrowserMultiFormatReader | null>(null);
   const handledBarcodeRef = useRef(false);
+  const scannerHintTimerRef = useRef<number | null>(null);
 
   const hasRecords = records.length > 0;
   const totalQuantity = useMemo(() => records.reduce((sum, record) => sum + record.quantity, 0), [records]);
@@ -73,53 +153,146 @@ export default function App() {
   useEffect(() => {
     return () => {
       controlsRef.current?.stop();
+      clearScannerHintTimer();
     };
   }, []);
 
+  function clearScannerHintTimer() {
+    if (scannerHintTimerRef.current !== null) {
+      window.clearTimeout(scannerHintTimerRef.current);
+      scannerHintTimerRef.current = null;
+    }
+  }
+
+  function armScannerHintTimer() {
+    clearScannerHintTimer();
+    scannerHintTimerRef.current = window.setTimeout(() => {
+      if (!handledBarcodeRef.current) {
+        setScannerMessage('Still looking. Use the rear camera, good light, and fill the red line with the barcode.');
+      }
+    }, 7000);
+  }
+
+  function handleCapturedBarcode(barcodeValue: string) {
+    const barcode = barcodeValue.trim();
+    if (!barcode || handledBarcodeRef.current) {
+      return;
+    }
+
+    handledBarcodeRef.current = true;
+    clearScannerHintTimer();
+    controlsRef.current?.stop();
+    setPendingBarcode(barcode);
+    setQuantity('1');
+    setBestBeforeDate('');
+    setScannerState('paused');
+    setScannerMessage('Barcode captured');
+  }
+
+  async function startNativeScanner(video: HTMLVideoElement): Promise<boolean> {
+    if (!window.BarcodeDetector || !navigator.mediaDevices?.getUserMedia) {
+      return false;
+    }
+
+    let detector: NativeBarcodeDetector;
+    try {
+      detector = new window.BarcodeDetector({ formats: NATIVE_BARCODE_FORMATS });
+    } catch {
+      return false;
+    }
+
+    const stream = await navigator.mediaDevices.getUserMedia(REAR_CAMERA_CONSTRAINTS);
+    let stopped = false;
+    let detecting = false;
+    const intervalMs = 220;
+
+    video.srcObject = stream;
+    video.setAttribute('playsinline', 'true');
+    await video.play();
+
+    const timer = window.setInterval(() => {
+      if (stopped || detecting || handledBarcodeRef.current || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+        return;
+      }
+
+      detecting = true;
+      detector
+        .detect(video)
+        .then((barcodes) => {
+          const barcode = barcodes.find((candidate) => candidate.rawValue?.trim());
+          if (barcode?.rawValue) {
+            handleCapturedBarcode(barcode.rawValue);
+          }
+        })
+        .catch(() => {
+          setScannerMessage('Scanner is open, but detection had trouble. Try holding the barcode flatter.');
+        })
+        .finally(() => {
+          detecting = false;
+        });
+    }, intervalMs);
+
+    controlsRef.current = {
+      stop: () => {
+        stopped = true;
+        window.clearInterval(timer);
+        stream.getTracks().forEach((track) => track.stop());
+        if (video.srcObject === stream) {
+          video.srcObject = null;
+        }
+      },
+    };
+
+    return true;
+  }
+
+  async function startZxingScanner(video: HTMLVideoElement) {
+    scannerRef.current = new BrowserMultiFormatReader(createScannerHints(), {
+      delayBetweenScanAttempts: 150,
+      delayBetweenScanSuccess: 500,
+      tryPlayVideoTimeout: 8000,
+    });
+    controlsRef.current = await scannerRef.current.decodeFromConstraints(REAR_CAMERA_CONSTRAINTS, video, (result, error) => {
+      if (result) {
+        handleCapturedBarcode(result.getText());
+        return;
+      }
+
+      if (error && error.name !== 'NotFoundException' && error.name !== 'ChecksumException') {
+        setScannerMessage('Scanner is open, but this barcode is hard to read. Try better light or manual entry.');
+      }
+    });
+  }
+
   async function startScanner() {
-    if (!videoRef.current) {
+    const video = videoRef.current;
+    if (!video) {
       return;
     }
 
     setScannerState('starting');
-    setScannerMessage('Opening camera...');
+    setScannerMessage('Opening rear camera...');
     setNotice('');
+    clearScannerHintTimer();
     handledBarcodeRef.current = false;
 
     try {
       controlsRef.current?.stop();
-      scannerRef.current = new BrowserMultiFormatReader();
-      controlsRef.current = await scannerRef.current.decodeFromVideoDevice(
-        undefined,
-        videoRef.current,
-        (result) => {
-          if (!result || handledBarcodeRef.current) {
-            return;
-          }
-
-          const barcode = result.getText().trim();
-          if (!barcode) {
-            return;
-          }
-
-          handledBarcodeRef.current = true;
-          controlsRef.current?.stop();
-          setPendingBarcode(barcode);
-          setQuantity('1');
-          setBestBeforeDate('');
-          setScannerState('paused');
-          setScannerMessage('Barcode captured');
-        },
-      );
+      const nativeScannerStarted = await startNativeScanner(video);
+      if (!nativeScannerStarted) {
+        await startZxingScanner(video);
+      }
       setScannerState('scanning');
-      setScannerMessage('Point the camera at a barcode');
-    } catch {
+      setScannerMessage('Point the rear camera at a barcode');
+      armScannerHintTimer();
+    } catch (error) {
       setScannerState('error');
-      setScannerMessage('Camera scanning is unavailable. You can enter the barcode manually.');
+      setScannerMessage(getScannerErrorMessage(error));
     }
   }
 
   function stopScanner() {
+    clearScannerHintTimer();
     controlsRef.current?.stop();
     controlsRef.current = null;
     handledBarcodeRef.current = false;
@@ -135,6 +308,7 @@ export default function App() {
     }
 
     controlsRef.current?.stop();
+    clearScannerHintTimer();
     handledBarcodeRef.current = true;
     setPendingBarcode(barcode);
     setManualBarcode('');
@@ -230,6 +404,7 @@ export default function App() {
   }
 
   function cancelPendingRecord() {
+    clearScannerHintTimer();
     setPendingBarcode('');
     setQuantity('1');
     setBestBeforeDate('');
