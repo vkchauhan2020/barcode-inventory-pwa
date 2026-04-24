@@ -96,6 +96,10 @@ function downloadCsv(csv: string, filename: string): void {
   URL.revokeObjectURL(url);
 }
 
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === 'AbortError';
+}
+
 function formatDisplayDateTime(value: string): string {
   return new Intl.DateTimeFormat(undefined, {
     dateStyle: 'medium',
@@ -372,24 +376,55 @@ export default function App() {
     const csv = createCsv(records);
     const filename = createCsvFilename();
     const file = new File([csv], filename, { type: 'text/csv;charset=utf-8' });
-    const shareData = {
+    const fileShareData: ShareData = {
       title: 'Inventory scan',
-      text: 'Inventory scan CSV',
+      text: `${records.length} inventory records in CSV format.`,
       files: [file],
+    };
+    const textShareData: ShareData = {
+      title: filename,
+      text: csv,
     };
 
     try {
-      if (navigator.canShare?.(shareData)) {
-        await navigator.share(shareData);
+      if (navigator.canShare?.(fileShareData)) {
+        await navigator.share(fileShareData);
         setNotice('CSV shared from your phone.');
-      } else {
-        downloadCsv(csv, filename);
-        setNotice('Sharing files is unavailable here, so the CSV was downloaded.');
+        return;
       }
+
+      if (navigator.share) {
+        await navigator.share(textShareData);
+        setNotice('CSV text shared. If you need an attachment, use the download button and attach it in your email app.');
+        return;
+      }
+
+      downloadCsv(csv, filename);
+      setNotice('CSV file sharing is unavailable here, so the CSV was downloaded.');
     } catch (error) {
-      if ((error as DOMException).name !== 'AbortError') {
+      if (isAbortError(error)) {
+        setNotice('Sharing was cancelled.');
+        return;
+      }
+
+      try {
+        if (navigator.share) {
+          await navigator.share(textShareData);
+          setNotice('CSV text shared. If you need an attachment, use the download button and attach it in your email app.');
+          return;
+        }
+      } catch (textShareError) {
+        if (isAbortError(textShareError)) {
+          setNotice('Sharing was cancelled.');
+          return;
+        }
+      }
+
+      if (hasRecords) {
         downloadCsv(csv, filename);
-        setNotice('Sharing did not complete, so the CSV was downloaded.');
+        setNotice('This browser could not share the CSV file, so it was downloaded.');
+      } else {
+        setNotice('Sharing did not complete.');
       }
     }
   }
