@@ -9,12 +9,14 @@ import {
   Play,
   Plus,
   Share2,
+  SlidersHorizontal,
   Square,
   Trash2,
   X,
 } from 'lucide-react';
 import { addInventoryRecord, clearInventoryRecords, deleteInventoryRecord, getInventoryRecords } from './storage';
 import { createCsv, createCsvFilename } from './csv';
+import { formatDateDot, formatShelfLifeStatus, getShelfLifeInfo } from './dates';
 import type { InventoryRecord } from './types';
 
 type ScannerState = 'idle' | 'starting' | 'scanning' | 'paused' | 'error';
@@ -74,11 +76,20 @@ const REAR_CAMERA_CONSTRAINTS: MediaStreamConstraints = {
   },
 };
 
-function createRecord(barcode: string, quantity: number, bestBeforeDate: string): InventoryRecord {
+const DEFAULT_NEAR_EXPIRY_THRESHOLD_DAYS = 30;
+const THRESHOLD_STORAGE_KEY = 'barcode-inventory-near-expiry-threshold-days';
+
+function createRecord(
+  barcode: string,
+  quantity: number,
+  manufacturingDate: string,
+  bestBeforeDate: string,
+): InventoryRecord {
   return {
     id: crypto.randomUUID(),
     barcode,
     quantity,
+    manufacturingDate,
     bestBeforeDate,
     scannedAt: new Date().toISOString(),
   };
@@ -130,6 +141,15 @@ function getScannerErrorMessage(error: unknown): string {
   return 'Camera scanning is unavailable. You can enter the barcode manually.';
 }
 
+function loadNearExpiryThreshold(): string {
+  const storedValue = window.localStorage.getItem(THRESHOLD_STORAGE_KEY);
+  const parsedValue = Number(storedValue);
+  if (Number.isFinite(parsedValue) && parsedValue >= 0) {
+    return String(parsedValue);
+  }
+  return String(DEFAULT_NEAR_EXPIRY_THRESHOLD_DAYS);
+}
+
 export default function App() {
   const [records, setRecords] = useState<InventoryRecord[]>([]);
   const [scannerState, setScannerState] = useState<ScannerState>('idle');
@@ -137,7 +157,9 @@ export default function App() {
   const [pendingBarcode, setPendingBarcode] = useState('');
   const [manualBarcode, setManualBarcode] = useState('');
   const [quantity, setQuantity] = useState('1');
+  const [manufacturingDate, setManufacturingDate] = useState('');
   const [bestBeforeDate, setBestBeforeDate] = useState('');
+  const [nearExpiryThresholdDays, setNearExpiryThresholdDays] = useState(loadNearExpiryThreshold);
   const [notice, setNotice] = useState('');
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const controlsRef = useRef<IScannerControls | null>(null);
@@ -147,12 +169,32 @@ export default function App() {
 
   const hasRecords = records.length > 0;
   const totalQuantity = useMemo(() => records.reduce((sum, record) => sum + record.quantity, 0), [records]);
+  const parsedNearExpiryThresholdDays = useMemo(() => {
+    const parsedValue = Number(nearExpiryThresholdDays);
+    return Number.isFinite(parsedValue) && parsedValue >= 0 ? Math.floor(parsedValue) : DEFAULT_NEAR_EXPIRY_THRESHOLD_DAYS;
+  }, [nearExpiryThresholdDays]);
+  const shelfLifeCounts = useMemo(
+    () =>
+      records.reduce(
+        (counts, record) => {
+          const status = getShelfLifeInfo(record, parsedNearExpiryThresholdDays).status;
+          counts[status] += 1;
+          return counts;
+        },
+        { valid: 0, 'near-expiry': 0, expired: 0 },
+      ),
+    [records, parsedNearExpiryThresholdDays],
+  );
 
   useEffect(() => {
     getInventoryRecords()
       .then(setRecords)
       .catch(() => setNotice('Could not load saved records from this phone.'));
   }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(THRESHOLD_STORAGE_KEY, String(parsedNearExpiryThresholdDays));
+  }, [parsedNearExpiryThresholdDays]);
 
   useEffect(() => {
     return () => {
@@ -188,6 +230,7 @@ export default function App() {
     controlsRef.current?.stop();
     setPendingBarcode(barcode);
     setQuantity('1');
+    setManufacturingDate('');
     setBestBeforeDate('');
     setScannerState('paused');
     setScannerMessage('Barcode captured');
@@ -317,6 +360,7 @@ export default function App() {
     setPendingBarcode(barcode);
     setManualBarcode('');
     setQuantity('1');
+    setManufacturingDate('');
     setBestBeforeDate('');
     setScannerState('paused');
     setScannerMessage('Manual barcode ready');
@@ -336,12 +380,22 @@ export default function App() {
       return;
     }
 
-    if (!bestBeforeDate) {
-      setNotice('Choose the best-before date before saving.');
+    if (!manufacturingDate) {
+      setNotice('Choose the manufacturing date before saving.');
       return;
     }
 
-    const record = createRecord(pendingBarcode.trim(), parsedQuantity, bestBeforeDate);
+    if (!bestBeforeDate) {
+      setNotice('Choose the expiry date before saving.');
+      return;
+    }
+
+    if (manufacturingDate > bestBeforeDate) {
+      setNotice('Manufacturing date cannot be after expiry date.');
+      return;
+    }
+
+    const record = createRecord(pendingBarcode.trim(), parsedQuantity, manufacturingDate, bestBeforeDate);
     try {
       await addInventoryRecord(record);
       setRecords((current) => [record, ...current]);
@@ -373,7 +427,7 @@ export default function App() {
       return;
     }
 
-    const csv = createCsv(records);
+    const csv = createCsv(records, parsedNearExpiryThresholdDays);
     const filename = createCsvFilename();
     const file = new File([csv], filename, { type: 'text/csv;charset=utf-8' });
     const fileShareData: ShareData = {
@@ -434,7 +488,7 @@ export default function App() {
       setNotice('Add at least one record before exporting.');
       return;
     }
-    downloadCsv(createCsv(records), createCsvFilename());
+    downloadCsv(createCsv(records, parsedNearExpiryThresholdDays), createCsvFilename());
     setNotice('CSV downloaded.');
   }
 
@@ -442,6 +496,7 @@ export default function App() {
     clearScannerHintTimer();
     setPendingBarcode('');
     setQuantity('1');
+    setManufacturingDate('');
     setBestBeforeDate('');
     setScannerState('idle');
     setScannerMessage('Ready to scan');
@@ -508,6 +563,26 @@ export default function App() {
             </button>
           </div>
         </form>
+
+        <div className="threshold-control">
+          <label htmlFor="nearExpiryThreshold">
+            <SlidersHorizontal size={17} aria-hidden="true" />
+            Near expiry threshold
+          </label>
+          <div className="threshold-input">
+            <input
+              id="nearExpiryThreshold"
+              type="number"
+              min="0"
+              step="1"
+              inputMode="numeric"
+              value={nearExpiryThresholdDays}
+              onChange={(event) => setNearExpiryThresholdDays(event.target.value)}
+              aria-describedby="nearExpiryThresholdUnit"
+            />
+            <span id="nearExpiryThresholdUnit">days</span>
+          </div>
+        </div>
       </section>
 
       {pendingBarcode && (
@@ -535,7 +610,19 @@ export default function App() {
               required
             />
 
-            <label htmlFor="bestBeforeDate">Best-before date</label>
+            <label htmlFor="manufacturingDate">Manufacturing date</label>
+            <div className="date-input-wrap">
+              <CalendarDays size={18} aria-hidden="true" />
+              <input
+                id="manufacturingDate"
+                type="date"
+                value={manufacturingDate}
+                onChange={(event) => setManufacturingDate(event.target.value)}
+                required
+              />
+            </div>
+
+            <label htmlFor="bestBeforeDate">Expiry date</label>
             <div className="date-input-wrap">
               <CalendarDays size={18} aria-hidden="true" />
               <input
@@ -566,6 +653,14 @@ export default function App() {
           <span>{totalQuantity}</span>
           units
         </div>
+        <div>
+          <span>{shelfLifeCounts['near-expiry']}</span>
+          near
+        </div>
+        <div>
+          <span>{shelfLifeCounts.expired}</span>
+          expired
+        </div>
         <button type="button" className="text-button" onClick={clearRecords} disabled={!hasRecords}>
           <Trash2 size={17} aria-hidden="true" />
           Clear
@@ -584,26 +679,32 @@ export default function App() {
           </div>
         ) : (
           <div className="record-list">
-            {records.map((record) => (
-              <article className="record-card" key={record.id}>
-                <div>
-                  <p className="barcode-value">{record.barcode}</p>
-                  <p className="record-meta">Best before {record.bestBeforeDate}</p>
-                  <p className="record-meta">{formatDisplayDateTime(record.scannedAt)}</p>
-                </div>
-                <div className="record-actions">
-                  <span className="quantity-pill">{record.quantity}</span>
-                  <button
-                    type="button"
-                    className="icon-button small"
-                    onClick={() => void removeRecord(record.id)}
-                    aria-label={`Delete barcode ${record.barcode}`}
-                  >
-                    <Trash2 size={18} aria-hidden="true" />
-                  </button>
-                </div>
-              </article>
-            ))}
+            {records.map((record) => {
+              const shelfLife = getShelfLifeInfo(record, parsedNearExpiryThresholdDays);
+              return (
+                <article className={`record-card ${shelfLife.status}`} key={record.id}>
+                  <div>
+                    <p className="barcode-value">{record.barcode}</p>
+                    <p className="record-meta">Mfg {formatDateDot(record.manufacturingDate) || 'not set'}</p>
+                    <p className="record-meta">Expiry {formatDateDot(record.bestBeforeDate)}</p>
+                    <p className="record-meta">{formatDisplayDateTime(record.scannedAt)}</p>
+                  </div>
+                  <div className="record-actions">
+                    <span className={`status-pill ${shelfLife.status}`}>{formatShelfLifeStatus(shelfLife.status)}</span>
+                    <span className="shelf-life-pill">{shelfLife.remainingDays}d</span>
+                    <span className="quantity-pill">{record.quantity}</span>
+                    <button
+                      type="button"
+                      className="icon-button small"
+                      onClick={() => void removeRecord(record.id)}
+                      aria-label={`Delete barcode ${record.barcode}`}
+                    >
+                      <Trash2 size={18} aria-hidden="true" />
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
           </div>
         )}
       </section>
