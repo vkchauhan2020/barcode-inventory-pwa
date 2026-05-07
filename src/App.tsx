@@ -146,6 +146,9 @@ function getScannerErrorMessage(error: unknown): string {
     if (error.name === 'NotReadableError') {
       return 'The camera is busy in another app. Close it there, then tap Scan again.';
     }
+    if (error.name === 'OverconstrainedError') {
+      return 'The camera does not support the required resolution. Try a different browser.';
+    }
   }
 
   return 'Camera scanning is unavailable. You can enter the barcode manually.';
