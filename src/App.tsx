@@ -79,6 +79,16 @@ const REAR_CAMERA_CONSTRAINTS: MediaStreamConstraints = {
 const DEFAULT_NEAR_EXPIRY_THRESHOLD_PERCENT = 25;
 const THRESHOLD_STORAGE_KEY = 'barcode-inventory-near-expiry-threshold-percent';
 
+function generateId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => {
+    const random = (Math.random() * 16) | 0;
+    return (char === 'x' ? random : (random & 0x3) | 0x8).toString(16);
+  });
+}
+
 function createRecord(
   barcode: string,
   quantity: number,
@@ -86,7 +96,7 @@ function createRecord(
   bestBeforeDate: string,
 ): InventoryRecord {
   return {
-    id: crypto.randomUUID(),
+    id: generateId(),
     barcode,
     quantity,
     manufacturingDate,
