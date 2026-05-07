@@ -672,21 +672,21 @@ export default function App() {
       </p>
 
       <section className="summary-strip" aria-label="Inventory summary">
-        <div>
-          <span>{records.length}</span>
-          lines
+        <div aria-label={`${records.length} lines`}>
+          <span aria-hidden="true">{records.length}</span>
+          <span aria-hidden="true">lines</span>
         </div>
-        <div>
-          <span>{totalQuantity}</span>
-          units
+        <div aria-label={`${totalQuantity} units`}>
+          <span aria-hidden="true">{totalQuantity}</span>
+          <span aria-hidden="true">units</span>
         </div>
-        <div>
-          <span>{shelfLifeCounts['near-expiry']}</span>
-          near
+        <div aria-label={`${shelfLifeCounts['near-expiry']} items near expiry`}>
+          <span aria-hidden="true">{shelfLifeCounts['near-expiry']}</span>
+          <span aria-hidden="true">near</span>
         </div>
-        <div>
-          <span>{shelfLifeCounts.expired}</span>
-          expired
+        <div aria-label={`${shelfLifeCounts.expired} items expired`}>
+          <span aria-hidden="true">{shelfLifeCounts.expired}</span>
+          <span aria-hidden="true">expired</span>
         </div>
         <button type="button" className="text-button" onClick={clearRecords} disabled={!hasRecords}>
           <Trash2 size={17} aria-hidden="true" />
