@@ -421,8 +421,12 @@ export default function App() {
   }
 
   async function removeRecord(id: string) {
-    await deleteInventoryRecord(id);
-    setRecords((current) => current.filter((record) => record.id !== id));
+    try {
+      await deleteInventoryRecord(id);
+      setRecords((current) => current.filter((record) => record.id !== id));
+    } catch {
+      setNotice('Could not delete this record. Please try again.');
+    }
   }
 
   async function clearRecords() {
