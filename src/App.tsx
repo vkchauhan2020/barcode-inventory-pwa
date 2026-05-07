@@ -171,6 +171,7 @@ export default function App() {
   const [bestBeforeDate, setBestBeforeDate] = useState('');
   const [nearExpiryThresholdPercent, setNearExpiryThresholdPercent] = useState(loadNearExpiryThreshold);
   const [notice, setNotice] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const controlsRef = useRef<IScannerControls | null>(null);
   const scannerRef = useRef<BrowserMultiFormatReader | null>(null);
@@ -409,6 +410,7 @@ export default function App() {
     }
 
     const record = createRecord(pendingBarcode.trim(), parsedQuantity, manufacturingDate, bestBeforeDate);
+    setIsSaving(true);
     try {
       await addInventoryRecord(record);
       setRecords((current) => [record, ...current]);
@@ -417,6 +419,8 @@ export default function App() {
       await startScanner();
     } catch {
       setNotice('Could not save this record on the phone.');
+    } finally {
+      setIsSaving(false);
     }
   }
 
@@ -652,9 +656,9 @@ export default function App() {
               />
             </div>
 
-            <button type="submit" className="primary-button full-width">
+            <button type="submit" className="primary-button full-width" disabled={isSaving}>
               <Plus size={18} aria-hidden="true" />
-              Save item
+              {isSaving ? 'Saving…' : 'Save item'}
             </button>
           </form>
         </section>
