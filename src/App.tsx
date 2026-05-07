@@ -667,26 +667,26 @@ export default function App() {
         </section>
       )}
 
-      <p className="notice" aria-live="polite" aria-atomic="true">
+      <p className="notice" aria-live="polite" aria-atomic="true" style={notice ? undefined : { display: 'none' }}>
         {notice}
       </p>
 
       <section className="summary-strip" aria-label="Inventory summary">
         <div aria-label={`${records.length} lines`}>
           <span aria-hidden="true">{records.length}</span>
-          <span aria-hidden="true">lines</span>
+          <span aria-hidden="true" style={{ fontSize: 'inherit', display: 'inline' }}>lines</span>
         </div>
         <div aria-label={`${totalQuantity} units`}>
           <span aria-hidden="true">{totalQuantity}</span>
-          <span aria-hidden="true">units</span>
+          <span aria-hidden="true" style={{ fontSize: 'inherit', display: 'inline' }}>units</span>
         </div>
         <div aria-label={`${shelfLifeCounts['near-expiry']} items near expiry`}>
           <span aria-hidden="true">{shelfLifeCounts['near-expiry']}</span>
-          <span aria-hidden="true">near</span>
+          <span aria-hidden="true" style={{ fontSize: 'inherit', display: 'inline' }}>near</span>
         </div>
         <div aria-label={`${shelfLifeCounts.expired} items expired`}>
           <span aria-hidden="true">{shelfLifeCounts.expired}</span>
-          <span aria-hidden="true">expired</span>
+          <span aria-hidden="true" style={{ fontSize: 'inherit', display: 'inline' }}>expired</span>
         </div>
         <button type="button" className="text-button" onClick={clearRecords} disabled={!hasRecords}>
           <Trash2 size={17} aria-hidden="true" />
