@@ -7,6 +7,7 @@ export type ShelfLifeStatus = 'valid' | 'near-expiry' | 'expired';
 export interface ShelfLifeInfo {
   remainingDays: number;
   totalShelfLifeDays: number | null;
+  remainingShelfLifePercent: number | null;
   status: ShelfLifeStatus;
 }
 
@@ -71,22 +72,33 @@ export function createShortCsvTimestamp(now = new Date()): string {
   )}`;
 }
 
-export function getShelfLifeInfo(record: InventoryRecord, thresholdDays: number, today = todayLocalDate()): ShelfLifeInfo {
+function clampPercent(value: number): number {
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+export function getShelfLifeInfo(
+  record: InventoryRecord,
+  thresholdPercent: number,
+  today = todayLocalDate(),
+): ShelfLifeInfo {
   const expiryDate = parseLocalDate(record.bestBeforeDate);
   const manufacturingDate = record.manufacturingDate ? parseLocalDate(record.manufacturingDate) : null;
   const remainingDays = expiryDate ? daysBetweenDates(today, expiryDate) : 0;
   const totalShelfLifeDays = expiryDate && manufacturingDate ? daysBetweenDates(manufacturingDate, expiryDate) : null;
+  const remainingShelfLifePercent =
+    totalShelfLifeDays && totalShelfLifeDays > 0 ? clampPercent((remainingDays / totalShelfLifeDays) * 100) : null;
 
   let status: ShelfLifeStatus = 'valid';
   if (remainingDays < 0) {
     status = 'expired';
-  } else if (remainingDays <= thresholdDays) {
+  } else if (remainingShelfLifePercent !== null && remainingShelfLifePercent <= thresholdPercent) {
     status = 'near-expiry';
   }
 
   return {
     remainingDays,
     totalShelfLifeDays,
+    remainingShelfLifePercent,
     status,
   };
 }

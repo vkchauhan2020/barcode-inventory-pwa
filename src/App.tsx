@@ -76,8 +76,8 @@ const REAR_CAMERA_CONSTRAINTS: MediaStreamConstraints = {
   },
 };
 
-const DEFAULT_NEAR_EXPIRY_THRESHOLD_DAYS = 30;
-const THRESHOLD_STORAGE_KEY = 'barcode-inventory-near-expiry-threshold-days';
+const DEFAULT_NEAR_EXPIRY_THRESHOLD_PERCENT = 25;
+const THRESHOLD_STORAGE_KEY = 'barcode-inventory-near-expiry-threshold-percent';
 
 function createRecord(
   barcode: string,
@@ -144,10 +144,10 @@ function getScannerErrorMessage(error: unknown): string {
 function loadNearExpiryThreshold(): string {
   const storedValue = window.localStorage.getItem(THRESHOLD_STORAGE_KEY);
   const parsedValue = Number(storedValue);
-  if (Number.isFinite(parsedValue) && parsedValue >= 0) {
+  if (Number.isFinite(parsedValue) && parsedValue >= 0 && parsedValue <= 100) {
     return String(parsedValue);
   }
-  return String(DEFAULT_NEAR_EXPIRY_THRESHOLD_DAYS);
+  return String(DEFAULT_NEAR_EXPIRY_THRESHOLD_PERCENT);
 }
 
 export default function App() {
@@ -159,7 +159,7 @@ export default function App() {
   const [quantity, setQuantity] = useState('1');
   const [manufacturingDate, setManufacturingDate] = useState('');
   const [bestBeforeDate, setBestBeforeDate] = useState('');
-  const [nearExpiryThresholdDays, setNearExpiryThresholdDays] = useState(loadNearExpiryThreshold);
+  const [nearExpiryThresholdPercent, setNearExpiryThresholdPercent] = useState(loadNearExpiryThreshold);
   const [notice, setNotice] = useState('');
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const controlsRef = useRef<IScannerControls | null>(null);
@@ -169,21 +169,24 @@ export default function App() {
 
   const hasRecords = records.length > 0;
   const totalQuantity = useMemo(() => records.reduce((sum, record) => sum + record.quantity, 0), [records]);
-  const parsedNearExpiryThresholdDays = useMemo(() => {
-    const parsedValue = Number(nearExpiryThresholdDays);
-    return Number.isFinite(parsedValue) && parsedValue >= 0 ? Math.floor(parsedValue) : DEFAULT_NEAR_EXPIRY_THRESHOLD_DAYS;
-  }, [nearExpiryThresholdDays]);
+  const parsedNearExpiryThresholdPercent = useMemo(() => {
+    const parsedValue = Number(nearExpiryThresholdPercent);
+    if (!Number.isFinite(parsedValue)) {
+      return DEFAULT_NEAR_EXPIRY_THRESHOLD_PERCENT;
+    }
+    return Math.max(0, Math.min(100, Math.floor(parsedValue)));
+  }, [nearExpiryThresholdPercent]);
   const shelfLifeCounts = useMemo(
     () =>
       records.reduce(
         (counts, record) => {
-          const status = getShelfLifeInfo(record, parsedNearExpiryThresholdDays).status;
+          const status = getShelfLifeInfo(record, parsedNearExpiryThresholdPercent).status;
           counts[status] += 1;
           return counts;
         },
         { valid: 0, 'near-expiry': 0, expired: 0 },
       ),
-    [records, parsedNearExpiryThresholdDays],
+    [records, parsedNearExpiryThresholdPercent],
   );
 
   useEffect(() => {
@@ -193,8 +196,8 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    window.localStorage.setItem(THRESHOLD_STORAGE_KEY, String(parsedNearExpiryThresholdDays));
-  }, [parsedNearExpiryThresholdDays]);
+    window.localStorage.setItem(THRESHOLD_STORAGE_KEY, String(parsedNearExpiryThresholdPercent));
+  }, [parsedNearExpiryThresholdPercent]);
 
   useEffect(() => {
     return () => {
@@ -390,8 +393,8 @@ export default function App() {
       return;
     }
 
-    if (manufacturingDate > bestBeforeDate) {
-      setNotice('Manufacturing date cannot be after expiry date.');
+    if (manufacturingDate >= bestBeforeDate) {
+      setNotice('Manufacturing date must be before expiry date.');
       return;
     }
 
@@ -427,7 +430,7 @@ export default function App() {
       return;
     }
 
-    const csv = createCsv(records, parsedNearExpiryThresholdDays);
+    const csv = createCsv(records, parsedNearExpiryThresholdPercent);
     const filename = createCsvFilename();
     const file = new File([csv], filename, { type: 'text/csv;charset=utf-8' });
     const fileShareData: ShareData = {
@@ -488,7 +491,7 @@ export default function App() {
       setNotice('Add at least one record before exporting.');
       return;
     }
-    downloadCsv(createCsv(records, parsedNearExpiryThresholdDays), createCsvFilename());
+    downloadCsv(createCsv(records, parsedNearExpiryThresholdPercent), createCsvFilename());
     setNotice('CSV downloaded.');
   }
 
@@ -574,13 +577,14 @@ export default function App() {
               id="nearExpiryThreshold"
               type="number"
               min="0"
+              max="100"
               step="1"
               inputMode="numeric"
-              value={nearExpiryThresholdDays}
-              onChange={(event) => setNearExpiryThresholdDays(event.target.value)}
+              value={nearExpiryThresholdPercent}
+              onChange={(event) => setNearExpiryThresholdPercent(event.target.value)}
               aria-describedby="nearExpiryThresholdUnit"
             />
-            <span id="nearExpiryThresholdUnit">days</span>
+            <span id="nearExpiryThresholdUnit">%</span>
           </div>
         </div>
       </section>
@@ -680,7 +684,9 @@ export default function App() {
         ) : (
           <div className="record-list">
             {records.map((record) => {
-              const shelfLife = getShelfLifeInfo(record, parsedNearExpiryThresholdDays);
+              const shelfLife = getShelfLifeInfo(record, parsedNearExpiryThresholdPercent);
+              const remainingPercent =
+                shelfLife.remainingShelfLifePercent !== null ? `${shelfLife.remainingShelfLifePercent}%` : 'n/a';
               return (
                 <article className={`record-card ${shelfLife.status}`} key={record.id}>
                   <div>
@@ -691,6 +697,7 @@ export default function App() {
                   </div>
                   <div className="record-actions">
                     <span className={`status-pill ${shelfLife.status}`}>{formatShelfLifeStatus(shelfLife.status)}</span>
+                    <span className="shelf-life-pill">{remainingPercent}</span>
                     <span className="shelf-life-pill">{shelfLife.remainingDays}d</span>
                     <span className="quantity-pill">{record.quantity}</span>
                     <button

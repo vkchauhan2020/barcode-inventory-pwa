@@ -12,6 +12,7 @@ const CSV_HEADERS = [
   'Quantity',
   'Manufacturing Date',
   'Expiry Date',
+  'Remaining Shelf Life %',
   'Remaining Shelf Life Days',
   'Total Shelf Life Days',
   'Status',
@@ -26,15 +27,16 @@ function escapeCsvCell(value: string | number): string {
   return text;
 }
 
-export function createCsv(records: InventoryRecord[], nearExpiryThresholdDays: number): string {
+export function createCsv(records: InventoryRecord[], nearExpiryThresholdPercent: number): string {
   const rows = records.map((record) => {
-    const shelfLife = getShelfLifeInfo(record, nearExpiryThresholdDays);
+    const shelfLife = getShelfLifeInfo(record, nearExpiryThresholdPercent);
 
     return [
       record.barcode,
       record.quantity,
       formatDateDot(record.manufacturingDate),
       formatDateDot(record.bestBeforeDate),
+      shelfLife.remainingShelfLifePercent ?? '',
       shelfLife.remainingDays,
       shelfLife.totalShelfLifeDays ?? '',
       formatShelfLifeStatus(shelfLife.status),
