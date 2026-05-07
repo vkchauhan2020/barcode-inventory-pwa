@@ -21,11 +21,16 @@ function parseDateParts(value: string): { year: number; month: number; day: numb
     return null;
   }
 
-  return {
-    year: Number(match[1]),
-    month: Number(match[2]),
-    day: Number(match[3]),
-  };
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+
+  const date = new Date(year, month - 1, day);
+  if (date.getFullYear() !== year || date.getMonth() + 1 !== month || date.getDate() !== day) {
+    return null;
+  }
+
+  return { year, month, day };
 }
 
 export function parseLocalDate(value: string): Date | null {
