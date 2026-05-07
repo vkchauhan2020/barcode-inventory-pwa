@@ -21,10 +21,9 @@ const CSV_HEADERS = [
 
 function escapeCsvCell(value: string | number): string {
   const text = String(value);
-  if (/[",\n\r]/.test(text)) {
-    return `"${text.replace(/"/g, '""')}"`;
-  }
-  return text;
+  const needsFormulaPrefix = /^[=+\-@]/.test(text);
+  const escaped = /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  return needsFormulaPrefix ? `\t${escaped}` : escaped;
 }
 
 export function createCsv(records: InventoryRecord[], nearExpiryThresholdPercent: number): string {
