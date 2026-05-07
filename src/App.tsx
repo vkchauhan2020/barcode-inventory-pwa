@@ -667,7 +667,9 @@ export default function App() {
         </section>
       )}
 
-      {notice && <p className="notice">{notice}</p>}
+      <p className="notice" aria-live="polite" aria-atomic="true">
+        {notice}
+      </p>
 
       <section className="summary-strip" aria-label="Inventory summary">
         <div>
